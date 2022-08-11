@@ -7,9 +7,9 @@ import 'dart:io'
 import 'dart:typed_data' show Uint8List;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:android_intent_plus/flag.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:android_intent_plus/android_intent.dart' as android_content;
@@ -76,9 +76,8 @@ class ModelViewerState extends State<ModelViewer> {
           print('>>>> ModelViewer wants to load: <${navigation.url}>'); // DEBUG
           if (!Platform.isAndroid) {
             if (Platform.isIOS && navigation.url == widget.iosSrc) {
-              await launch(
-                navigation.url,
-                forceSafariVC: true,
+              await launchUrl(
+                Uri.parse(navigation.url),
               );
               return NavigationDecision.prevent;
             }
@@ -157,7 +156,7 @@ class ModelViewerState extends State<ModelViewer> {
   String _buildHTML(final String htmlTemplate) {
     return HTMLBuilder.build(
       htmlTemplate: htmlTemplate,
-      src: '/model',
+      src: widget.src,
       alt: widget.alt,
       poster: widget.poster,
       seamlessPoster: widget.seamlessPoster,
@@ -294,32 +293,28 @@ class ModelViewerState extends State<ModelViewer> {
           await response.close();
           break;
 
+      ///默认情况下直接通过地址在 assets目录中查找文件.
         default:
-          if (request.uri.isAbsolute) {
-            debugPrint("Redirect: ${request.uri}");
-            await response.redirect(request.uri);
-          } else if (request.uri.hasAbsolutePath) {
-            // Some gltf models need other resources from the origin
-            var pathSegments = [...url.pathSegments];
-            pathSegments.removeLast();
-            var tryDestination = p.joinAll([
-              url.origin,
-              ...pathSegments,
-              request.uri.path.replaceFirst('/', '')
-            ]);
-            debugPrint("Try: ${tryDestination}");
-            await response.redirect(Uri.parse(tryDestination));
-          } else {
-            debugPrint('404 with ${request.uri}');
-            final text = utf8.encode("Resource '${request.uri}' not found");
+          try {
+            final requestUrl = request.uri.path;
+            final assetsFilePath = requestUrl.startsWith("/")
+                ? requestUrl.substring(1, requestUrl.length)
+                : requestUrl;
+            final data = await _readAsset(assetsFilePath);
+            final mimeType = lookupMimeType(requestUrl);
             response
-              ..statusCode = HttpStatus.notFound
-              ..headers.add("Content-Type", "text/plain;charset=UTF-8")
-              ..headers.add("Content-Length", text.length.toString())
-              ..add(text);
-            await response.close();
-            break;
+              ..statusCode = HttpStatus.ok
+              ..headers
+                  .add("Content-Type", mimeType ?? "application/octet-stream")
+              ..headers.add("Content-Length", data.lengthInBytes.toString())
+              ..headers.add("Access-Control-Allow-Origin", "*")
+              ..add(data);
+          } on Exception catch (e) {
+            debugPrint('read file from assets error ${e.toString()}');
+            response..statusCode = HttpStatus.notFound;
           }
+          await response.close();
+          break;
       }
     });
   }

@@ -4,6 +4,9 @@
 # Visual Studio Code
 .vscode/
 
+# Android Studio
+.idea/
+
 # Editor backup files
 *~
 
